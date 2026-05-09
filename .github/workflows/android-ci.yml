@@ -22,6 +22,12 @@ jobs:
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Install Android build tools
+        run: sdkmanager "build-tools;34.0.0"
+
       - name: Make Gradle wrapper executable
         run: chmod +x gradlew
 
@@ -31,8 +37,82 @@ jobs:
       - name: Assemble release APK
         run: ./gradlew assembleRelease -PappVersionName=pr-${{ github.event.pull_request.number || github.run_number }} -PappVersionCode=${{ github.run_number }}
 
-      - name: Upload release APK
+      - name: Prepare signing inputs
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          required_vars=(
+            ANDROID_KEYSTORE_BASE64
+            ANDROID_KEYSTORE_PASSWORD
+            ANDROID_KEY_ALIAS
+            ANDROID_KEY_PASSWORD
+          )
+
+          for var_name in "${required_vars[@]}"; do
+            if [[ -z "${!var_name:-}" ]]; then
+              echo "Missing required secret: ${var_name}" >&2
+              exit 1
+            fi
+          done
+
+          keystore_path="${RUNNER_TEMP}/release.keystore"
+          echo "${ANDROID_KEYSTORE_BASE64}" | base64 --decode > "${keystore_path}"
+
+          {
+            echo "ANDROID_KEYSTORE_FILE=${keystore_path}"
+            echo "ANDROID_BUILD_TOOLS_DIR=${ANDROID_SDK_ROOT}/build-tools/34.0.0"
+            echo "UNSIGNED_APK_PATH=$(find app/build/outputs/apk/release -name '*-unsigned.apk' -print -quit)"
+            echo "ALIGNED_APK_PATH=${RUNNER_TEMP}/app-release-aligned.apk"
+            echo "FINAL_APK_PATH=${GITHUB_WORKSPACE}/releases/app-release-installable-pr-${{ github.event.pull_request.number || github.run_number }}.apk"
+          } >> "${GITHUB_ENV}"
+
+      - name: Align and sign release APK
+        shell: bash
+        env:
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+
+          mkdir -p "${GITHUB_WORKSPACE}/releases"
+
+          if [[ -z "${UNSIGNED_APK_PATH}" || ! -f "${UNSIGNED_APK_PATH}" ]]; then
+            echo "Unsigned release APK not found." >&2
+            exit 1
+          fi
+
+          "${ANDROID_BUILD_TOOLS_DIR}/zipalign" -f -p 4 "${UNSIGNED_APK_PATH}" "${ALIGNED_APK_PATH}"
+
+          "${ANDROID_BUILD_TOOLS_DIR}/apksigner" sign \
+            --ks "${ANDROID_KEYSTORE_FILE}" \
+            --ks-key-alias "${ANDROID_KEY_ALIAS}" \
+            --ks-pass "pass:${ANDROID_KEYSTORE_PASSWORD}" \
+            --key-pass "pass:${ANDROID_KEY_PASSWORD}" \
+            --out "${FINAL_APK_PATH}" \
+            "${ALIGNED_APK_PATH}"
+
+      - name: Verify final APK
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          echo "Final APK path: ${FINAL_APK_PATH}"
+          ls -lh "${FINAL_APK_PATH}"
+          file "${FINAL_APK_PATH}"
+          unzip -t "${FINAL_APK_PATH}"
+          "${ANDROID_BUILD_TOOLS_DIR}/zipalign" -c -P 16 -v 4 "${FINAL_APK_PATH}"
+          "${ANDROID_BUILD_TOOLS_DIR}/apksigner" verify --verbose --print-certs "${FINAL_APK_PATH}"
+          sha256sum "${FINAL_APK_PATH}"
+
+      - name: Upload installable release APK
         uses: actions/upload-artifact@v4
         with:
-          name: mm__food__pr-${{ github.event.pull_request.number || github.run_number }}
-          path: app/build/outputs/apk/release/*.apk
+          name: app-release-installable-apk-pr-${{ github.event.pull_request.number || github.run_number }}
+          path: ${{ github.workspace }}/releases/app-release-installable-pr-${{ github.event.pull_request.number || github.run_number }}.apk
