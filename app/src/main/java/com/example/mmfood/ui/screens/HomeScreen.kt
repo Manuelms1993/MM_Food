@@ -39,6 +39,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.res.painterResource
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.compose.currentStateAsState
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -68,6 +71,8 @@ fun HomeScreen(
     val shoppingList by viewModel.shoppingList.collectAsStateWithLifecycle()
     val listState = rememberLazyListState()
     val snackbarHostState = remember { SnackbarHostState() }
+    val lifecycleOwner = LocalLifecycleOwner.current
+    val lifecycleState by lifecycleOwner.lifecycle.currentStateAsState()
     var selectedTab by remember { mutableIntStateOf(0) }
 
     val visibleConversation = remember(conversation, showFullHistory) {
@@ -92,11 +97,11 @@ fun HomeScreen(
         viewModel.dismissWarning()
     }
 
-    LaunchedEffect(selectedTab) {
-        if (selectedTab != 0) return@LaunchedEffect
+    LaunchedEffect(selectedTab, lifecycleState) {
+        if (selectedTab != 0 || !lifecycleState.isAtLeast(Lifecycle.State.RESUMED)) return@LaunchedEffect
         while (true) {
             viewModel.ensureMenuFresh()
-            delay(1_000)
+            delay(2_000)
         }
     }
 
