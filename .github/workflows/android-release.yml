@@ -144,7 +144,7 @@ jobs:
           ls -lh "${FINAL_APK_PATH}"
           file "${FINAL_APK_PATH}"
           unzip -t "${FINAL_APK_PATH}"
-          "${ANDROID_BUILD_TOOLS_DIR}/zipalign" -c -P 16 -v 4 "${FINAL_APK_PATH}"
+          "${ANDROID_BUILD_TOOLS_DIR}/zipalign" -c -p -v 4 "${FINAL_APK_PATH}"
           "${ANDROID_BUILD_TOOLS_DIR}/apksigner" verify --verbose --print-certs "${FINAL_APK_PATH}"
           sha256sum "${FINAL_APK_PATH}"
 
